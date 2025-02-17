@@ -13,7 +13,7 @@ from tabulate import tabulate
 import random
 CONTRACT_ID = "EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVWRF"
 IPLIST = ["91.210.226.50", "91.210.226.47", "91.210.226.29"]
-NODEPORT = 31841
+NODEPORT = 31842
 def setup_logging():
     log_filename = f"qubic_benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     logging.basicConfig(
@@ -120,7 +120,7 @@ def get_current_tick():
 def send_benchmark(seed: str, account_num: int, max_retries: int = 10, retry_delay: float = 0.1) -> Optional[Dict[str, str]]:
     
     ip = random.choice(IPLIST)
-    command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -seed {seed} -qutilsendtomanybenchmark {account_num} 1"
+    command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -seed {seed} -scheduletick 5 -qutilsendtomanybenchmark {account_num} 1"
     
     for attempt in range(max_retries):
         try:
