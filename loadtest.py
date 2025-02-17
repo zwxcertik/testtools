@@ -94,17 +94,19 @@ def verifytickhashes(file: str) -> None:
         print(f"Error reading or processing file {file}: {e}")
 
 def get_balance(id):
-    ip = random.choice(IPLIST)
-    command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getbalance {id}"
-    result = subprocess.run(command, shell=True, capture_output=True, text=True)
-    output_lines = result.stdout.splitlines()
+    output_lines = []
     balance_info = {}
+    while(len(output_lines) <=1 ):
+        ip = random.choice(IPLIST)
+        command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getbalance {id}"
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        output_lines = result.stdout.splitlines()
+        
 
     for line in output_lines:
         if ":" in line:
             key, value = line.split(": ", 1)  
             balance_info[key.strip()] = value.strip()
-
     return balance_info
 def get_current_tick():
     output_lines = []
