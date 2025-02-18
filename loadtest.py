@@ -640,7 +640,7 @@ def compare_logs(log_files: List[str]) -> Dict:
     print("\nTest Information:")
     print(tabulate(basic_info, headers=basic_headers, tablefmt='grid'))
 
-    # 2. Tick
+    # 2. Tick信息表格
     tick_info = []
     tick_headers = ["Test", "Start Tick", "End Tick", "Tick Range", "Total Ticks", "Avg Tick Time"]
     for i, row in enumerate(comparison_data, 1):
@@ -655,7 +655,7 @@ def compare_logs(log_files: List[str]) -> Dict:
     print("\nTick Information:")
     print(tabulate(tick_info, headers=tick_headers, tablefmt='grid'))
 
-    # 3. perf
+    # 3. 性能指标表格
     performance_info = []
     performance_headers = ["Test", "Total Transfers", "Avg Transfers/Tick", "TPS", 
                         "Transfer/Tick Min", "Transfer/Tick Max", "Transfer/Tick Variance"]
@@ -710,7 +710,7 @@ def read_test_report(report_file: str) -> None:
         print(f"\nTimestamp: {report['timestamp']}")
         print(f"Number of tests: {report['summary']['total_tests']}")
         
-        # 1. basic
+        # 1. 基本信息表格
         basic_info = []
         basic_headers = ["Test", "Start Time", "End Time", "Duration", "Account Num"]
         for i, row in enumerate(report['comparison_data']['data'], 1):
@@ -724,7 +724,7 @@ def read_test_report(report_file: str) -> None:
         print("\nTest Information:")
         print(tabulate(basic_info, headers=basic_headers, tablefmt='grid'))
 
-        # 2. Tick
+        # 2. Tick信息表格
         tick_info = []
         tick_headers = ["Test", "Start Tick", "End Tick", "Tick Range", "Total Ticks", "Avg Tick Time"]
         for i, row in enumerate(report['comparison_data']['data'], 1):
@@ -739,7 +739,7 @@ def read_test_report(report_file: str) -> None:
         print("\nTick Information:")
         print(tabulate(tick_info, headers=tick_headers, tablefmt='grid'))
 
-        # 3. perf
+        # 3. 性能指标表格
         performance_info = []
         performance_headers = ["Test", "Total Transfers", "Avg Transfers/Tick", "TPS", 
                             "Transfer/Tick Min", "Transfer/Tick Max", "Transfer/Tick Variance"]
@@ -756,7 +756,7 @@ def read_test_report(report_file: str) -> None:
         print("\nPerformance Metrics:")
         print(tabulate(performance_info, headers=performance_headers, tablefmt='grid'))
 
-        # 4. diff
+        # 4. 差异分析表格
         diff_info = []
         diff_headers = ["Test", "TPS", "TPS Diff (Avg)", "TPS Diff (Max)",
                       "Transfers", "Transfers Diff (Avg)", "Transfers Diff (Max)"]
@@ -773,7 +773,7 @@ def read_test_report(report_file: str) -> None:
         print("\nComparative Analysis:")
         print(tabulate(diff_info, headers=diff_headers, tablefmt='grid'))
 
-        # 5. sum
+        # 5. 总结信息
         print("\nSummary Statistics:")
         summary_data = [
             ["Average TPS", f"{report['summary']['avg_tps']}"],
