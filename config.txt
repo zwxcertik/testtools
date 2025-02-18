@@ -1,0 +1,7 @@
+[Network]
+# IP addresses separated by commas
+ip_list = 91.210.226.50, 91.210.226.47, 91.210.226.29
+node_port = 31842
+
+[Contract]
+contract_id = EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVWRF
