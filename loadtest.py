@@ -332,7 +332,7 @@ def loadtest(duration: int, account_num: int, verify: bool = False, test_index: 
     old_out = int(old_balance.get("Outgoing Amount", 0))
     new_out = int(new_balance.get("Outgoing Amount", 0))
     logging.info(f"Total unique TxHashes: {len(unique_tx_hashes)}")
-    conclude_data(tick_data_all, duration, transfers_per_tick, new_out-old_out, end_tick-start_tick+1, verify)
+    conclude_data(tick_data_all, duration, transfers_per_tick, new_out-old_out, int(end_tick)-int(start_tick)+1, verify)
     
     return log_filename
 
