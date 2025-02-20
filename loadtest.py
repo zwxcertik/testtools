@@ -21,23 +21,6 @@ config.read("./config.txt")
 IPLIST = [ip.strip() for ip in config.get('Network', 'ip_list').split(',')]
 NODEPORT = config.getint('Network', 'node_port')
 CONTRACT_ID = config.get('Contract', 'contract_id')
-class BenchmarkMetrics(NamedTuple):
-    duration:int
-    account_num:int
-    test_start_time: datetime    
-    test_end_time: datetime     
-    timestamp: datetime         
-    start_tick: int
-    end_tick: int
-    total_unique_txs: int
-    total_ticks: int
-    total_txhashes: int
-    total_transfers: int
-    avg_transfers_per_tick: float
-    tps: float
-    tick_distribution: Dict[int, int]
-    transfers_distribution: Dict[int, int]
-    avg_tick_time: float
 
 def setup_logging(test_index: Optional[int] = None):
     
@@ -129,69 +112,35 @@ def verifytickhashes(file: str) -> None:
 def get_balance(id):
     output_lines = []
     balance_info = {}
-    
-    for attempt in range(10):
-        try:
-            ip = random.choice(IPLIST)
-            command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getbalance {id}"
-            
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                check=False  
-            )
-            
-            if result.returncode != 0:
-                print(f"Command failed with error: {result.stderr}")
-                continue
-                
-            output_lines = result.stdout.splitlines()
-            if len(output_lines) <= 1:
-                continue
-                
-            for line in output_lines:
-                if ":" in line:
-                    key, value = line.split(": ", 1)
-                    balance_info[key.strip()] = value.strip()
-            
-            if balance_info:  
-                return balance_info
-                
-        except Exception as e:
-            print(f"Error in attempt {attempt + 1}: {str(e)}")
-            
-    return balance_info  
+    while(True):
+        ip = random.choice(IPLIST)
+        command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getbalance {id}"
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        output_lines = result.stdout.splitlines()
+        if (len(output_lines) <=1):
+            time.sleep(0.05)
+        else:
+            break
+        
+
+    for line in output_lines:
+        if ":" in line:
+            key, value = line.split(": ", 1)  
+            balance_info[key.strip()] = value.strip()
+    return balance_info
 
 def get_current_tick():
     
-    for attempt in range(10):
-        try:
-            ip = random.choice(IPLIST)
-            command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getcurrenttick"
-            
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            
-            if result.returncode != 0:
-                print(f"Command failed with error: {result.stderr}")
-                continue
-                
-            output_lines = result.stdout.splitlines()
-            if len(output_lines) >= 4:
-                key, value = output_lines[0].split(": ", 1)
-                return value
-                
-        except Exception as e:
-            print(f"Error in attempt {attempt + 1}: {str(e)}")
-            
-    return None  
+    output_lines = []
+    while(len(output_lines) <=1 ):
+        ip = random.choice(IPLIST)
+        command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getcurrenttick"
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        output_lines = result.stdout.splitlines()
+        if len(output_lines) >= 4:
+            key, value = output_lines[0].split(": ", 1) 
+            return value  
+        time.sleep(0.05)
 
 def send_benchmark(seed: str, account_num: int, max_retries: int = 10, retry_delay: float = 0.1) -> Optional[Dict[str, str]]:
     
@@ -235,6 +184,11 @@ def run_benchmarks(seeds, duration, account_num):
     hash_set = set()
     lock = threading.Lock()
     
+    tick_timestamps = {}  
+    tps_per_tick = {}    
+    transfers_per_tick = {}  
+    tick_durations = {}  
+    
     while True:
         current_tick = get_current_tick()
         if current_tick and current_tick.isdigit():
@@ -243,9 +197,9 @@ def run_benchmarks(seeds, duration, account_num):
         time.sleep(0.1)
     
     processed_seeds = {}
-    transfers_per_tick = {}  
     last_balance = get_balance(CONTRACT_ID)  
-    last_processed_tick = current_tick  
+    last_processed_tick = current_tick
+    tick_timestamps[current_tick] = time.time()
     
     def benchmark_task(seed):
         nonlocal current_tick, last_balance, last_processed_tick
@@ -264,13 +218,21 @@ def run_benchmarks(seeds, duration, account_num):
                 if new_tick > last_processed_tick:  
                     with lock:
                         if new_tick > last_processed_tick:  
+                            current_time = time.time()
+                            tick_duration = max(0.001, current_time - tick_timestamps[last_processed_tick])  # 确保不为0
+                            tick_durations[last_processed_tick] = tick_duration
+                            tick_timestamps[new_tick] = current_time
+                            
                             new_balance = get_balance(CONTRACT_ID)
                             old_out = int(last_balance.get("Outgoing Amount", 0))
                             new_out = int(new_balance.get("Outgoing Amount", 0))
                             transfer_count = new_out - old_out
                             
                             transfers_per_tick[last_processed_tick] = transfer_count
-                            logging.info(f"Transfers in Tick {last_processed_tick}: {transfer_count}")
+                            tps = transfer_count / tick_duration
+                            tps_per_tick[last_processed_tick] = tps
+                            
+                            logging.info(f"Tick {last_processed_tick}: Duration={tick_duration:.2f}s, Transfers={transfer_count}, TPS={tps:.2f}")
 
                             last_balance = new_balance
                             processed_seeds.clear()
@@ -317,14 +279,73 @@ def run_benchmarks(seeds, duration, account_num):
         thread.join()
 
     if last_processed_tick not in transfers_per_tick:
+        current_time = time.time()
+        tick_duration = max(0.001, current_time - tick_timestamps[last_processed_tick])  
+        tick_durations[last_processed_tick] = tick_duration
+        
         new_balance = get_balance(CONTRACT_ID)
         old_out = int(last_balance.get("Outgoing Amount", 0))
         new_out = int(new_balance.get("Outgoing Amount", 0))
         transfer_count = new_out - old_out
+        
         transfers_per_tick[last_processed_tick] = transfer_count
-        logging.info(f"Transfers in Tick {last_processed_tick}: {transfer_count}")
+        tps = transfer_count / tick_duration
+        tps_per_tick[last_processed_tick] = tps
+        
+        logging.info(f"Final Tick {last_processed_tick}: Duration={tick_duration:.2f}s, Transfers={transfer_count}, TPS={tps:.2f}")
 
-    return {tick: list(tx_hashes) for tick, tx_hashes in tick_data_all.items()}, hash_set, transfers_per_tick
+    return {
+        'transactions': {tick: list(tx_hashes) for tick, tx_hashes in tick_data_all.items()},
+        'hash_set': hash_set,
+        'transfers_per_tick': transfers_per_tick,
+        'tps_per_tick': tps_per_tick,
+        'tick_durations': tick_durations
+    }
+
+def conclude_data(tick_data_all, test_duration, transfers_per_tick, total_transfers, total_ticks, tps_per_tick, tick_durations, verify=False):
+    tick_hashes = dump_tick_hashes(tick_data_all)
+    total_tx_hashes = 0
+    
+    sorted_ticks = sorted(tick_data_all.keys())
+    for tick in sorted_ticks:
+        tx_hashes = tick_data_all[tick]
+        tx_hashes_count = len(tx_hashes)
+        total_tx_hashes += tx_hashes_count
+
+    avg_transfers_per_tick = total_transfers / max(1, len(transfers_per_tick))  
+    avg_tick_time = (test_duration * 60) / max(1, total_ticks)  
+    
+    non_zero_tps = [tps for tps in tps_per_tick.values() if tps is not None]  
+    non_zero_durations = [dur for dur in tick_durations.values() if dur is not None]  
+    
+    avg_measured_tps = sum(non_zero_tps) / max(1, len(non_zero_tps))  
+    avg_measured_tick_time = sum(non_zero_durations) / max(1, len(non_zero_durations))  
+    
+    logging.info("=== Summary ===")
+    logging.info(f"Total Ticks: {total_ticks}")
+    logging.info(f"Total TxHashes: {total_tx_hashes}")
+    logging.info(f"Total Transfers: {total_transfers}")
+    logging.info(f"Average Transfers per Tick: {avg_transfers_per_tick:.2f}")
+    logging.info(f"Average Tick Time (from duration): {avg_tick_time:.2f} seconds")
+    logging.info(f"Average Tick Time (measured): {avg_measured_tick_time:.2f} seconds")
+    logging.info(f"Number Of Transfers Per Second (TPS) (from total): {total_transfers / max(1, test_duration * 60):.2f}")
+    logging.info(f"Average TPS (from measurements): {avg_measured_tps:.2f}")
+    
+    if non_zero_tps:
+        max_tps = max(non_zero_tps)
+        min_tps = min(non_zero_tps)
+        logging.info(f"Max Tick TPS: {max_tps:.2f}")
+        logging.info(f"Min Tick TPS: {min_tps:.2f}")
+
+    if non_zero_durations:
+        max_duration = max(non_zero_durations)
+        min_duration = min(non_zero_durations)
+        logging.info(f"Max Tick Duration: {max_duration:.2f} seconds")
+        logging.info(f"Min Tick Duration: {min_duration:.2f} seconds")
+
+    if verify:
+        verifytickhashes(tick_hashes)
+
 def dump_tick_hashes(tick_data_all):
     output_file = f"qubic_benchmark_tick_data{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     try:
@@ -334,27 +355,6 @@ def dump_tick_hashes(tick_data_all):
     except Exception as e:
         print(f"Error writing to file: {e}")
     return output_file
-def conclude_data(tick_data_all, duration, transfers_per_tick, total_transfers, total_ticks, verify=False):
-    tick_hashes = dump_tick_hashes(tick_data_all)
-    total_tx_hashes = 0
-
-    for tick, tx_hashes in tick_data_all.items():
-        tx_hashes_count = len(tx_hashes)
-        total_tx_hashes += tx_hashes_count
-        logging.info(f"Tick: {tick}, TxHashes: {tx_hashes_count}")
-
-    avg_transfers_per_tick = total_transfers / len(transfers_per_tick) if transfers_per_tick else 0
-    avg_tick_time = (duration * 60) / total_ticks if total_ticks > 0 else 0  
-
-    logging.info(f"Total Ticks: {total_ticks}")
-    logging.info(f"Total TxHashes: {total_tx_hashes}")
-    logging.info(f"Total Transfers: {total_transfers}")
-    logging.info(f"Average Transfers per Tick: {avg_transfers_per_tick:.2f}")
-    logging.info(f"Average Tick Time: {avg_tick_time:.2f} seconds")  
-    logging.info(f"Number Of Transfers Per Second (TPS): {total_transfers / (duration * 60)}")
-
-    if verify:
-        verifytickhashes(tick_hashes)
 
 def loadtest(duration: int, account_num: int, verify: bool = False, test_index: Optional[int] = None) -> str:
     log_filename = setup_logging(test_index)
@@ -366,14 +366,19 @@ def loadtest(duration: int, account_num: int, verify: bool = False, test_index: 
     logging.info(f"  Account Number: {account_num}")
     old_balance = get_balance(CONTRACT_ID)
     logging.info(f"Test Starting At Tick: {start_tick}\n")
-    tick_data_all, unique_tx_hashes, transfers_per_tick = run_benchmarks(seeds, duration, account_num)
+    benchmark_result = run_benchmarks(seeds, duration, account_num)
+    tick_data_all = benchmark_result['transactions']
+    unique_tx_hashes = benchmark_result['hash_set'] 
+    transfers_per_tick = benchmark_result['transfers_per_tick']
+    tps_per_tick = benchmark_result['tps_per_tick']
+    tick_durations = benchmark_result['tick_durations']
     end_tick = get_current_tick()
     logging.info(f"Test Ending At Tick: {end_tick}\n")
     new_balance = get_balance(CONTRACT_ID)
     old_out = int(old_balance.get("Outgoing Amount", 0))
     new_out = int(new_balance.get("Outgoing Amount", 0))
     logging.info(f"Total unique TxHashes: {len(unique_tx_hashes)}")
-    conclude_data(tick_data_all, duration, transfers_per_tick, new_out-old_out, int(end_tick)-int(start_tick)+1, verify)
+    conclude_data(tick_data_all, duration, transfers_per_tick, new_out-old_out, int(end_tick)-int(start_tick)+1, tps_per_tick, tick_durations, verify)
     
     return log_filename
 
@@ -459,39 +464,56 @@ def extract_timestamp_from_filename(filename: str) -> datetime:
         timestamp_str = match.group(1)
         return datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
     raise ValueError(f"Invalid filename format: {filename}")
-def parse_log_file(file_path: str) -> BenchmarkMetrics:
 
+class BenchmarkMetrics(NamedTuple):
+    duration: int
+    account_num: int
+    test_start_time: datetime    
+    test_end_time: datetime     
+    timestamp: datetime         
+    start_tick: int
+    end_tick: int
+    total_unique_txs: int
+    total_ticks: int
+    total_txhashes: int
+    total_transfers: int
+    avg_transfers_per_tick: float
+    tps: float
+    tick_distribution: Dict[int, int]
+    transfers_distribution: Dict[int, int]
+    avg_tick_time: float
+    max_tick_tps: float
+    min_tick_tps: float
+    max_tick_duration: float
+    min_tick_duration: float
+
+def parse_log_file(file_path: str) -> BenchmarkMetrics:
     try:
         with open(file_path, 'r') as f:
             content = f.read()
         
-        # Extract timestamp from filename
         timestamp = extract_timestamp_from_filename(file_path)
         
-        # Extract test parameters
         duration_match = re.search(r'Duration: (\d+) minutes', content)
         if not duration_match:
             raise ValueError(f"Could not find duration in {file_path}")
-        duration = int(duration_match.group(1))
+        testduration = int(duration_match.group(1))
         
         account_num_match = re.search(r'Account Number: (\d+)', content)
         if not account_num_match:
             raise ValueError(f"Could not find account number in {file_path}")
         account_num = int(account_num_match.group(1))
         
-        # Extract test start time
         start_time_match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - INFO - Test Starting At Tick:', content)
         if not start_time_match:
             raise ValueError(f"Could not find start time in {file_path}")
         test_start_time = datetime.strptime(start_time_match.group(1), '%Y-%m-%d %H:%M:%S,%f')
         
-        # Extract test end time
         end_time_match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - INFO - Test Ending At Tick:', content)
         if not end_time_match:
             raise ValueError(f"Could not find end time in {file_path}")
         test_end_time = datetime.strptime(end_time_match.group(1), '%Y-%m-%d %H:%M:%S,%f')
         
-        # Extract ticks
         start_tick_match = re.search(r'Test Starting At Tick: (\d+)', content)
         if not start_tick_match:
             raise ValueError(f"Could not find start tick in {file_path}")
@@ -502,7 +524,6 @@ def parse_log_file(file_path: str) -> BenchmarkMetrics:
             raise ValueError(f"Could not find end tick in {file_path}")
         end_tick = int(end_tick_match.group(1))
         
-        # Extract metrics
         total_unique_txs_match = re.search(r'Total unique TxHashes: (\d+)', content)
         if not total_unique_txs_match:
             raise ValueError(f"Could not find total unique txhashes in {file_path}")
@@ -518,19 +539,6 @@ def parse_log_file(file_path: str) -> BenchmarkMetrics:
             raise ValueError(f"Could not find total txhashes in {file_path}")
         total_txhashes = int(total_txhashes_match.group(1))
         
-        # Extract tick distribution
-        tick_pattern = r'INFO - Tick: (\d+), TxHashes: (\d+)'
-        tick_matches = re.finditer(tick_pattern, content)
-        tick_distribution = {}
-        for match in tick_matches:
-            tick = int(match.group(1))
-            txhashes = int(match.group(2))
-            tick_distribution[tick] = txhashes
-        
-        if not tick_distribution:
-            raise ValueError(f"Could not find any tick distributions in {file_path}")
-        
-        # Extract transfers
         total_transfers_match = re.search(r'Total Transfers: (\d+)', content)
         if not total_transfers_match:
             raise ValueError(f"Could not find total transfers in {file_path}")
@@ -541,25 +549,48 @@ def parse_log_file(file_path: str) -> BenchmarkMetrics:
             raise ValueError(f"Could not find average transfers per tick in {file_path}")
         avg_transfers_per_tick = float(avg_transfers_match.group(1))
         
-        tps_match = re.search(r'Number Of Transfers Per Second \(TPS\): ([\d.]+)', content)
+        tps_match = re.search(r'Number Of Transfers Per Second \(TPS\) \(from total\): ([\d.]+)', content)
         if not tps_match:
             raise ValueError(f"Could not find TPS in {file_path}")
         tps = float(tps_match.group(1))
 
-        # Extract transfers distribution
-        transfers_pattern = r'INFO - Transfers in Tick (\d+): (\d+)'
-        transfers_matches = re.finditer(transfers_pattern, content)
+        tick_pattern = r'(?:INFO - Tick|Final Tick) (\d+): Duration=([\d.]+)s, Transfers=(\d+), TPS=([\d.]+)'
+        tick_matches = re.finditer(tick_pattern, content)
+        
+        tick_distribution = {}
         transfers_distribution = {}
-        for match in transfers_matches:
+        for match in tick_matches:
             tick = int(match.group(1))
-            transfers = int(match.group(2))
+            duration = float(match.group(2))
+            transfers = int(match.group(3))
+            tick_tps = float(match.group(4))
+
+            tick_distribution[tick] = transfers
             transfers_distribution[tick] = transfers
-        avg_tick_time_match = re.search(r'Average Tick Time: ([\d.]+) seconds', content) 
+
+        if not tick_distribution:
+            raise ValueError(f"Could not find any tick distributions in {file_path}")
+
+        avg_tick_time_match = re.search(r'Average Tick Time \(from duration\): ([\d.]+) seconds', content)
         if not avg_tick_time_match:
             raise ValueError(f"Could not find average tick time in {file_path}")
-        avg_tick_time = float(avg_tick_time_match.group(1)) 
+        avg_tick_time = float(avg_tick_time_match.group(1))
+
+        max_tick_tps_match = re.search(r'Max Tick TPS: ([\d.]+)', content)
+        min_tick_tps_match = re.search(r'Min Tick TPS: ([\d.]+)', content)
+        max_tick_duration_match = re.search(r'Max Tick Duration: ([\d.]+) seconds', content)
+        min_tick_duration_match = re.search(r'Min Tick Duration: ([\d.]+) seconds', content)
+
+        if not all([max_tick_tps_match, min_tick_tps_match, max_tick_duration_match, min_tick_duration_match]):
+            raise ValueError(f"Could not find min/max metrics in {file_path}")
+
+        max_tick_tps = float(max_tick_tps_match.group(1))
+        min_tick_tps = float(min_tick_tps_match.group(1))
+        max_tick_duration = float(max_tick_duration_match.group(1))
+        min_tick_duration = float(min_tick_duration_match.group(1))
+
         return BenchmarkMetrics(
-            duration=duration,
+            duration=testduration,
             account_num=account_num,
             test_start_time=test_start_time,
             test_end_time=test_end_time,
@@ -574,13 +605,15 @@ def parse_log_file(file_path: str) -> BenchmarkMetrics:
             tps=tps,
             tick_distribution=tick_distribution,
             transfers_distribution=transfers_distribution,
-            avg_tick_time=avg_tick_time
+            avg_tick_time=avg_tick_time,
+            max_tick_tps=max_tick_tps,
+            min_tick_tps=min_tick_tps,
+            max_tick_duration=max_tick_duration,
+            min_tick_duration=min_tick_duration
         )
     except Exception as e:
         print(f"Error parsing {file_path}: {str(e)}")
         raise
-
-
 def compare_logs(log_files: List[str]) -> Dict:
     # Parse all log files
     metrics = []
@@ -622,9 +655,7 @@ def compare_logs(log_files: List[str]) -> Dict:
         tps_diff_max = metric.tps - tps_max
         
         test_duration = (metric.test_end_time - metric.test_start_time).total_seconds()
-        tick_range = metric.end_tick - metric.start_tick  
-        avg_tick_time = test_duration / tick_range if tick_range > 0 else 0
-
+        tick_range = metric.end_tick - metric.start_tick
         
         row = {
             'Filename': file,
@@ -636,11 +667,15 @@ def compare_logs(log_files: List[str]) -> Dict:
             'End Tick': metric.end_tick,
             'Tick Range': tick_range,
             'Average Tick Time': f"{metric.avg_tick_time:.2f}s",
+            'Min Tick Duration': f"{metric.min_tick_duration:.2f}s",
+            'Max Tick Duration': f"{metric.max_tick_duration:.2f}s",
             'Total Unique TxHashes': metric.total_unique_txs,
             'Total Ticks': metric.total_ticks,
             'Total Transfers': metric.total_transfers,
             'Avg Transfers/Tick': f"{metric.avg_transfers_per_tick:.2f}",
-            'TPS': f"{metric.tps:.2f}",
+            'Overall TPS': f"{metric.tps:.2f}",
+            'Min Tick TPS': f"{metric.min_tick_tps:.2f}",
+            'Max Tick TPS': f"{metric.max_tick_tps:.2f}",
             'Transfer/Tick Min': f"{tick_min:.2f}",
             'Transfer/Tick Max': f"{tick_max:.2f}",
             'Transfer/Tick Variance': f"{tick_var:.2f}",
@@ -650,19 +685,6 @@ def compare_logs(log_files: List[str]) -> Dict:
             'TPS Diff from Max': f"{tps_diff_max:+.2f}"
         }
         comparison_data.append(row)
-
-    result = {
-        'headers': list(comparison_data[0].keys()),
-        'data': comparison_data,
-        'summary': {
-            'total_transfers_avg': f"{total_transfers_avg:.2f}",
-            'total_transfers_max': f"{total_transfers_max:.2f}",
-            'tps_avg': f"{tps_avg:.2f}",
-            'tps_max': f"{tps_max:.2f}",
-            'test_count': len(metrics)
-        }
-    }
-    
 
     print("\nBenchmark Comparison (Sorted by TPS):")
     
@@ -680,7 +702,8 @@ def compare_logs(log_files: List[str]) -> Dict:
     print(tabulate(basic_info, headers=basic_headers, tablefmt='grid'))
 
     tick_info = []
-    tick_headers = ["Test", "Start Tick", "End Tick", "Tick Range", "Total Ticks", "Avg Tick Time"]
+    tick_headers = ["Test", "Start Tick", "End Tick", "Tick Range", "Total Ticks", 
+                   "Avg Tick Time", "Min Tick Duration", "Max Tick Duration"]
     for i, row in enumerate(comparison_data, 1):
         tick_info.append([
             f"Test {i}",
@@ -688,20 +711,25 @@ def compare_logs(log_files: List[str]) -> Dict:
             row['End Tick'],
             row['Tick Range'],
             row['Total Ticks'],
-            row['Average Tick Time']
+            row['Average Tick Time'],
+            row['Min Tick Duration'],
+            row['Max Tick Duration']
         ])
     print("\nTick Information:")
     print(tabulate(tick_info, headers=tick_headers, tablefmt='grid'))
 
     performance_info = []
-    performance_headers = ["Test", "Total Transfers", "Avg Transfers/Tick", "TPS", 
-                        "Transfer/Tick Min", "Transfer/Tick Max", "Transfer/Tick Variance"]
+    performance_headers = ["Test", "Total Transfers", "Avg Transfers/Tick", 
+                         "Overall TPS", "Min Tick TPS", "Max Tick TPS",
+                         "Transfer/Tick Min", "Transfer/Tick Max", "Transfer/Tick Variance"]
     for i, row in enumerate(comparison_data, 1):
         performance_info.append([
             f"Test {i}",
             row['Total Transfers'],
             row['Avg Transfers/Tick'],
-            row['TPS'],
+            row['Overall TPS'],
+            row['Min Tick TPS'],
+            row['Max Tick TPS'],
             row['Transfer/Tick Min'],
             row['Transfer/Tick Max'],
             row['Transfer/Tick Variance']
@@ -709,6 +737,18 @@ def compare_logs(log_files: List[str]) -> Dict:
     print("\nPerformance Metrics:")
     print(tabulate(performance_info, headers=performance_headers, tablefmt='grid'))
 
+    result = {
+        'headers': list(comparison_data[0].keys()),
+        'data': comparison_data,
+        'summary': {
+            'total_transfers_avg': f"{total_transfers_avg:.2f}",
+            'total_transfers_max': f"{total_transfers_max:.2f}",
+            'tps_avg': f"{tps_avg:.2f}",
+            'tps_max': f"{tps_max:.2f}",
+            'test_count': len(metrics)
+        }
+    }
+    
     return result
 
 def generate_test_report(test_type: str, log_files: List[str], comparison_data: dict) -> str:
@@ -746,7 +786,7 @@ def read_test_report(report_file: str) -> None:
         
         print(f"\nTimestamp: {report['timestamp']}")
         print(f"Number of tests: {report['summary']['total_tests']}")
-        
+
         basic_info = []
         basic_headers = ["Test", "Start Time", "End Time", "Duration", "Account Num"]
         for i, row in enumerate(report['comparison_data']['data'], 1):
@@ -761,7 +801,8 @@ def read_test_report(report_file: str) -> None:
         print(tabulate(basic_info, headers=basic_headers, tablefmt='grid'))
 
         tick_info = []
-        tick_headers = ["Test", "Start Tick", "End Tick", "Tick Range", "Total Ticks", "Avg Tick Time"]
+        tick_headers = ["Test", "Start Tick", "End Tick", "Tick Range", "Total Ticks", 
+                       "Avg Tick Time", "Min Tick Duration", "Max Tick Duration"]
         for i, row in enumerate(report['comparison_data']['data'], 1):
             tick_info.append([
                 f"Test {i}",
@@ -769,20 +810,26 @@ def read_test_report(report_file: str) -> None:
                 row['End Tick'],
                 row['Tick Range'],
                 row['Total Ticks'],
-                row['Average Tick Time']
+                row['Average Tick Time'],
+                row['Min Tick Duration'],
+                row['Max Tick Duration']
             ])
         print("\nTick Information:")
         print(tabulate(tick_info, headers=tick_headers, tablefmt='grid'))
 
+        # 性能指标表格 - 新增TPS指标
         performance_info = []
-        performance_headers = ["Test", "Total Transfers", "Avg Transfers/Tick", "TPS", 
-                            "Transfer/Tick Min", "Transfer/Tick Max", "Transfer/Tick Variance"]
+        performance_headers = ["Test", "Total Transfers", "Avg Transfers/Tick", 
+                             "Overall TPS", "Min Tick TPS", "Max Tick TPS",
+                             "Transfer/Tick Min", "Transfer/Tick Max", "Transfer/Tick Variance"]
         for i, row in enumerate(report['comparison_data']['data'], 1):
             performance_info.append([
                 f"Test {i}",
                 row['Total Transfers'],
                 row['Avg Transfers/Tick'],
-                row['TPS'],
+                row['Overall TPS'],
+                row['Min Tick TPS'],
+                row['Max Tick TPS'],
                 row['Transfer/Tick Min'],
                 row['Transfer/Tick Max'],
                 row['Transfer/Tick Variance']
@@ -791,12 +838,12 @@ def read_test_report(report_file: str) -> None:
         print(tabulate(performance_info, headers=performance_headers, tablefmt='grid'))
 
         diff_info = []
-        diff_headers = ["Test", "TPS", "TPS Diff (Avg)", "TPS Diff (Max)",
-                      "Transfers", "Transfers Diff (Avg)", "Transfers Diff (Max)"]
+        diff_headers = ["Test", "Overall TPS", "TPS Diff (Avg)", "TPS Diff (Max)",
+                       "Total Transfers", "Transfers Diff (Avg)", "Transfers Diff (Max)"]
         for i, row in enumerate(report['comparison_data']['data'], 1):
             diff_info.append([
                 f"Test {i}",
-                row['TPS'],
+                row['Overall TPS'],
                 row['TPS Diff from Avg'],
                 row['TPS Diff from Max'],
                 row['Total Transfers'],
@@ -811,7 +858,11 @@ def read_test_report(report_file: str) -> None:
             ["Average TPS", f"{report['summary']['avg_tps']}"],
             ["Maximum TPS", f"{report['summary']['max_tps']}"],
             ["Average Total Transfers", f"{report['summary']['avg_transfers']}"],
-            ["Maximum Total Transfers", f"{report['summary']['max_transfers']}"]
+            ["Maximum Total Transfers", f"{report['summary']['max_transfers']}"],
+            ["Highest Tick TPS", f"{max(float(row['Max Tick TPS']) for row in report['comparison_data']['data']):.2f}"],
+            ["Lowest Tick TPS", f"{min(float(row['Min Tick TPS']) for row in report['comparison_data']['data']):.2f}"],
+            ["Longest Tick Duration", f"{max(float(row['Max Tick Duration'].rstrip('s')) for row in report['comparison_data']['data']):.2f}s"],
+            ["Shortest Tick Duration", f"{min(float(row['Min Tick Duration'].rstrip('s')) for row in report['comparison_data']['data']):.2f}s"]
         ]
         print(tabulate(summary_data, headers=['Metric', 'Value'], tablefmt='grid'))
         
