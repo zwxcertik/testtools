@@ -129,28 +129,69 @@ def verifytickhashes(file: str) -> None:
 def get_balance(id):
     output_lines = []
     balance_info = {}
-    while(len(output_lines) <=1 ):
-        ip = random.choice(IPLIST)
-        command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getbalance {id}"
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        output_lines = result.stdout.splitlines()
-        
+    
+    for attempt in range(10):
+        try:
+            ip = random.choice(IPLIST)
+            command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getbalance {id}"
+            
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False  
+            )
+            
+            if result.returncode != 0:
+                print(f"Command failed with error: {result.stderr}")
+                continue
+                
+            output_lines = result.stdout.splitlines()
+            if len(output_lines) <= 1:
+                continue
+                
+            for line in output_lines:
+                if ":" in line:
+                    key, value = line.split(": ", 1)
+                    balance_info[key.strip()] = value.strip()
+            
+            if balance_info:  
+                return balance_info
+                
+        except Exception as e:
+            print(f"Error in attempt {attempt + 1}: {str(e)}")
+            
+    return balance_info  
 
-    for line in output_lines:
-        if ":" in line:
-            key, value = line.split(": ", 1)  
-            balance_info[key.strip()] = value.strip()
-    return balance_info
 def get_current_tick():
-    output_lines = []
-    while(len(output_lines) <=1 ):
-        ip = random.choice(IPLIST)
-        command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getcurrenttick"
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        output_lines = result.stdout.splitlines()
-        if len(output_lines) >= 4:
-            key, value = output_lines[0].split(": ", 1) 
-            return value 
+    
+    for attempt in range(10):
+        try:
+            ip = random.choice(IPLIST)
+            command = f"./qubic-cli -nodeip {ip} -nodeport {NODEPORT} -getcurrenttick"
+            
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            if result.returncode != 0:
+                print(f"Command failed with error: {result.stderr}")
+                continue
+                
+            output_lines = result.stdout.splitlines()
+            if len(output_lines) >= 4:
+                key, value = output_lines[0].split(": ", 1)
+                return value
+                
+        except Exception as e:
+            print(f"Error in attempt {attempt + 1}: {str(e)}")
+            
+    return None  
 
 def send_benchmark(seed: str, account_num: int, max_retries: int = 10, retry_delay: float = 0.1) -> Optional[Dict[str, str]]:
     
